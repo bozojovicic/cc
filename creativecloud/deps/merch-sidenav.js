@@ -1,9 +1,7 @@
-// branch: catalog-regressions-4 commit: 90641e42ad012c2386133cbd2df855f468842b2d Wed, 29 May 2024 12:05:08 GMT
-
 // src/sidenav/merch-sidenav.js
 import { html as html4, css as css5, LitElement as LitElement4 } from "/libs/deps/lit-all.min.js";
 
-// ../../node_modules/@spectrum-web-components/reactive-controllers/src/MatchMedia.js
+// ../node_modules/@spectrum-web-components/reactive-controllers/src/MatchMedia.js
 var MatchMediaController = class {
   constructor(e, t) {
     this.key = Symbol("match-media-key");
@@ -41,7 +39,21 @@ var headingStyles = css`
 // src/merch-search.js
 import { html, LitElement, css as css2 } from "/libs/deps/lit-all.min.js";
 
-// src/deeplink.js
+// src/constants.js
+var EVENT_MERCH_CHANGE = "merch-change";
+
+// src/utils.js
+function debounce(func, delay) {
+  let debounceTimer;
+  return function() {
+    const context = this;
+    const args = arguments;
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => func.apply(context, args), delay);
+  };
+}
+
+// ../commons/src/deeplink.js
 var EVENT_HASHCHANGE = "hashchange";
 function parseState(hash = window.location.hash) {
   const result = [];
@@ -72,12 +84,16 @@ function pushState(state) {
   });
   hash.sort();
   const value = hash.toString();
+  if (value === window.location.hash)
+    return;
   let lastScrollTop = window.scrollY || document.documentElement.scrollTop;
   window.location.hash = value;
   window.scrollTo(0, lastScrollTop);
 }
 function deeplink(callback) {
   const handler = () => {
+    if (!window.location.hash.includes("="))
+      return;
     const state = parseState(window.location.hash);
     callback(state);
   };
@@ -88,16 +104,13 @@ function deeplink(callback) {
   };
 }
 
-// src/utils.js
-function debounce(func, delay) {
-  let debounceTimer;
-  return function() {
-    const context = this;
-    const args = arguments;
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => func.apply(context, args), delay);
-  };
-}
+// ../commons/src/aem.js
+var accessToken = localStorage.getItem("masAccessToken");
+var headers = {
+  Authorization: `Bearer ${accessToken}`,
+  pragma: "no-cache",
+  "cache-control": "no-cache"
+};
 
 // src/merch-search.js
 var MerchSearch = class extends LitElement {
@@ -109,15 +122,33 @@ var MerchSearch = class extends LitElement {
   }
   constructor() {
     super();
-    this.handleInput = () => pushStateFromComponent(this, this.search.value);
+    this.handleInput = () => {
+      pushStateFromComponent(this, this.search.value);
+    };
+    this.handleInputAndAnalytics = () => {
+      pushStateFromComponent(this, this.search.value);
+      if (this.search.value) {
+        this.dispatchEvent(
+          new CustomEvent(EVENT_MERCH_CHANGE, {
+            bubbles: true,
+            composed: true,
+            detail: {
+              type: "search",
+              value: this.search.value
+            }
+          })
+        );
+      }
+    };
     this.handleInputDebounced = debounce(this.handleInput.bind(this));
+    this.handleChangeDebounced = debounce(this.handleInputAndAnalytics.bind(this));
   }
   connectedCallback() {
     super.connectedCallback();
     if (!this.search)
       return;
     this.search.addEventListener("input", this.handleInputDebounced);
-    this.search.addEventListener("change", this.handleInputDebounced);
+    this.search.addEventListener("change", this.handleChangeDebounced);
     this.search.addEventListener("submit", this.handleInputSubmit);
     this.updateComplete.then(() => {
       this.setStateFromURL();
@@ -127,7 +158,7 @@ var MerchSearch = class extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this.search.removeEventListener("input", this.handleInputDebounced);
-    this.search.removeEventListener("change", this.handleInputDebounced);
+    this.search.removeEventListener("change", this.handleChangeDebounced);
     this.search.removeEventListener("submit", this.handleInputSubmit);
     this.stopDeeplink?.();
   }
@@ -381,6 +412,46 @@ customElements.define(
 var SPECTRUM_MOBILE_LANDSCAPE = "(max-width: 700px)";
 var TABLET_DOWN = "(max-width: 1199px)";
 
+// src/bodyScrollLock.js
+var isIosDevice = /iP(ad|hone|od)/.test(window?.navigator?.platform) || window?.navigator?.platform === "MacIntel" && window.navigator.maxTouchPoints > 1;
+var documentListenerAdded = false;
+var previousBodyOverflowSetting;
+var disableBodyScroll = (targetElement) => {
+  if (!targetElement)
+    return;
+  if (isIosDevice) {
+    document.body.style.position = "fixed";
+    targetElement.ontouchmove = (event) => {
+      if (event.targetTouches.length === 1) {
+        event.stopPropagation();
+      }
+    };
+    if (!documentListenerAdded) {
+      document.addEventListener("touchmove", (e) => e.preventDefault());
+      documentListenerAdded = true;
+    }
+  } else {
+    previousBodyOverflowSetting = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+  }
+};
+var enableBodyScroll = (targetElement) => {
+  if (!targetElement)
+    return;
+  if (isIosDevice) {
+    targetElement.ontouchstart = null;
+    targetElement.ontouchmove = null;
+    document.body.style.position = "";
+    document.removeEventListener("touchmove", (e) => e.preventDefault());
+    documentListenerAdded = false;
+  } else {
+    if (previousBodyOverflowSetting !== void 0) {
+      document.body.style.overflow = previousBodyOverflowSetting;
+      previousBodyOverflowSetting = void 0;
+    }
+  }
+};
+
 // src/sidenav/merch-sidenav.js
 document.addEventListener("sp-opened", () => {
   document.body.classList.add("merch-modal");
@@ -504,6 +575,7 @@ var MerchSideNav = class extends LitElement4 {
   }
   openModal() {
     this.updateComplete.then(async () => {
+      disableBodyScroll(this.dialog);
       const options = {
         trigger: this.#target,
         notImmediatelyClosable: true,
@@ -515,6 +587,7 @@ var MerchSideNav = class extends LitElement4 {
       );
       overlay.addEventListener("close", () => {
         this.modal = false;
+        enableBodyScroll(this.dialog);
       });
       this.shadowRoot.querySelector("sp-theme").append(overlay);
     });
