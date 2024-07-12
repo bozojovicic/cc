@@ -2,6 +2,7 @@ import { getLibs } from '../../scripts/utils.js';
 
 const miloLibs = getLibs('/libs');
 const { loadStyle } = await import(`${miloLibs}/utils/utils.js`);
+const EVENT_MERCH_CHANGE = 'merch-change';
 
 // Helps with TBT: MWPW-145127
 loadStyle(`${miloLibs}/blocks/global-navigation/features/profile/dropdown.css`);
@@ -46,11 +47,17 @@ export default async function init(el) {
       sidenav.setAttribute('daa-lh', 'b1|sidenav');
       await sidenav.updateComplete;
       if (merchCards) {
-        merchCards.addEventListener('sort-changed', ({ detail }) => {
-          handleCustomAnalyticsEvent(`${detail.value}--sort`, merchCards);
+        merchCards.addEventListener(EVENT_MERCH_CHANGE, ({ detail }) => {
+          const eventName = detail.value ? `${detail.value}--${detail.type}` : detail.type;
+          handleCustomAnalyticsEvent(eventName, merchCards);
         });
-        sidenav.search.addEventListener('search-changed', ({ detail }) => {
+        sidenav.search.addEventListener(EVENT_MERCH_CHANGE, ({ detail }) => {
           handleCustomAnalyticsEvent(`${detail.value}--search`, sidenav.search);
+        });
+        merchCards.addEventListener('click', ({ target }) => {
+          if (target.tagName === 'MERCH-ICON') {
+            handleCustomAnalyticsEvent('merch-icon-click', merchCards);
+          }
         });
 
         sidenav.filters.addEventListener('click', ({ target }) => {
